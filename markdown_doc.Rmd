@@ -1,0 +1,336 @@
+---
+title: "Which music is best? (well, according to Pitchfork)"
+author: "Tyryn Carnegie"
+date: "26/06/2021"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(wesanderson)
+
+review_dataframe_csv <- read.csv("Pitchfork_data_cleaned.csv")
+
+review_dataframe <- review_dataframe_csv %>%
+  # Set date_time to date variable
+  mutate(date_time = as.Date(date_time)) %>% 
+  # Remove 'collector's edition' etc. Remember that you cannot split the below into two lines
+  filter(!grepl("Collector's Edition|Collectors Edition|Collector's Album|Collector's Editon|Deluxe Edition|Anniversary Edition|th Anniversary", album_name)) %>% 
+  filter(!grepl("The Best of|the Best of|The Best Of|Box Set", album_name)) %>% 
+  filter(publish_year>=1999 & publish_year<=2020)
+  
+  
+
+num_reviews <- nrow(distinct(review_dataframe_csv, album_name, artist_name))
+
+num_artists <- nrow(distinct(review_dataframe_csv,artist_name))
+
+
+
+```
+
+
+
+
+
+## What's going on?
+```{r dataintro, include=FALSE}
+# Create grouped bar graph of number of reviews per genre per year
+number_reviews <- review_dataframe %>%
+  group_by(genre_name, publish_year) %>%
+  add_tally() %>% 
+  select(genre_name, publish_year, n) %>% 
+  distinct(genre_name, publish_year, .keep_all = TRUE) %>% 
+  # Reshape wide so that the missing genres are added
+  spread(genre_name, n) %>% 
+  gather(Genre, `Number reviews`, Electronic:`<NA>`)  %>% 
+  mutate(`Number reviews` = replace_na(`Number reviews`, 0)) 
+
+
+# Data for the total reviews per year
+number_reviewsYear <- number_reviews %>%
+  group_by(publish_year) %>% 
+  mutate(reviews = sum(`Number reviews`)) %>% 
+  distinct(publish_year, .keep_all = TRUE)
+
+# Data for the maximum and minimum reviews per year 2002-2020.
+reviewsYear <- number_reviewsYear %>% 
+  filter(publish_year>=2005) 
+max_reviewsYear <- max(reviewsYear$reviews)
+min_reviewsYear <- min(reviewsYear$reviews) 
+```
+
+[Pitchfork magazine](https://pitchfork.com/) is a music review website with its archive going back to 1999. Its been my favourite music review website for several years and most mornings I read some of their reviews for recently released music. However, over time I've noticed a couple of things about Pitchfork. First, the music review are generally focused more on indie music. Also, it seems that the less likely it is that I've heard of the artist, the more likely that they're going to receive a good review. After some time being a loyal Pitchfork reader, I had this collection of questions: 
+
+1. Does Pitchfork prefer reviewing certain types of music?
+2. Which type of music was most well (and worst well) received? 
+3. Did music get better over time?
+4. Which artists consistently produced the best music?
+
+To get to the bottom of this, I wrote script in R that scraped from each review the:
+
+* artist name
+* album name
+* genre
+* album rating
+* year published. 
+
+The scraping script produced a dataset of `r num_reviews` reviews from `r num_artists` artists. The script I used to scrape the data can be found on [my github](https://github.com/Tyryn/pitchfork_album_review_analysis). The dataset includes 21 years of review data, from January 1999 to December 2020. I excluded all reviews of significant albums from the past. I also tried to exclude all box sets and reissues. 
+
+The figure below shows that the number of reviews increased sharpely between 1999 and 2002, with the number jumping again in 2005. From 2005 and 2020, the number of reviews each year steadied to between `r min_reviewsYear` and `r max_reviewsYear`. 
+
+
+```{r plotintro, echo=FALSE}
+ggplot(number_reviewsYear, aes(x=publish_year, y=reviews)) +
+  geom_bar(stat = "identity", fill = "#FF6666") + 
+  scale_x_continuous("", breaks=seq(1998, 2021, 2)) +
+  scale_y_continuous("Number of reviews") + theme_bw() +
+  geom_text(aes(label=reviews), vjust=-0.5, size=3)
+```
+
+
+## 1. Does Pitchfork prefer reviewing certain types of music?
+```{r dataQ1, include=FALSE}
+# Bar graph with only the four main genres and "other"
+number_reviewsAbbr <- number_reviews %>% 
+  mutate(Genre = replace(Genre, Genre!="Electronic" & Genre!="Pop/R&B" &
+                           Genre!="Rap" & Genre!="Rock", "Other")) %>% 
+  group_by(Genre, publish_year) %>% 
+  mutate(reviews_genre = sum(`Number reviews`)) %>% 
+  group_by(publish_year) %>% 
+  mutate(reviews_year = sum(`Number reviews`)) %>% 
+  mutate(genre_prop = reviews_genre/reviews_year) %>% 
+  distinct(publish_year, Genre, genre_prop, reviews_genre) 
+
+number_reviewsAbbrOther <- number_reviews %>% 
+  group_by(publish_year) %>% 
+  mutate(reviews_year = sum(`Number reviews`)) %>% 
+  filter(Genre!="Electronic" & Genre!="Pop/R&B" &
+                           Genre!="Rap" & Genre!="Rock") %>% 
+  group_by(Genre, publish_year) %>% 
+  mutate(reviews_genre = sum(`Number reviews`)) %>% 
+  mutate(genre_prop = reviews_genre/reviews_year) %>% 
+  distinct(publish_year, Genre, genre_prop, reviews_genre) %>% 
+  mutate(Genre = replace(Genre, Genre=="<NA>", "Unspecified"))
+
+# Want to set the levels so that the order of the bars looks neat
+number_reviewsAbbr$Genre <- factor(number_reviewsAbbr$Genre, 
+                                   levels = c("Other", "Pop/R&B",
+                                              "Rap","Electronic", "Rock"))
+
+# Get the proportion of reviews each year (creating a function for this for fun)
+prop2020.fun <- function(genre, dataframe) {
+    prop2020 <- filter(dataframe, publish_year==2020) %>% 
+      filter(Genre==genre)
+  prop2020 <- paste0(round(as.numeric(prop2020[1,4])*100), "%")
+}
+
+prop2020_rock <- prop2020.fun("Rock", number_reviewsAbbr)
+prop2020_rap<- prop2020.fun("Rap", number_reviewsAbbr)
+prop2020_electronic <- prop2020.fun("Electronic", number_reviewsAbbr)
+prop2020_pop <- prop2020.fun("Pop/R&B", number_reviewsAbbr)
+prop2020_experimental <- prop2020.fun("Experimental", number_reviewsAbbrOther)
+prop2020_folk <- prop2020.fun("Folk/Country", number_reviewsAbbrOther)
+prop2020_global <- prop2020.fun("Global", number_reviewsAbbrOther)
+prop2020_jazz <- prop2020.fun("Jazz", number_reviewsAbbrOther)
+prop2020_metal <- prop2020.fun("Metal", number_reviewsAbbrOther)
+prop2020_unspecified <- prop2020.fun("Unspecified", number_reviewsAbbrOther)
+
+
+# Get the proportion of reviews each year (creating a function for this for fun)
+reviewRank.fun <- function(rank) {
+prop <- review_dataframe %>% 
+  group_by(genre_name) %>%
+  summarise(n=n()) %>% 
+  mutate(freq = paste0(round((n/sum(n))*100, 2), "%")) %>% 
+  ungroup() %>% 
+  arrange(desc(n)) %>% 
+  mutate(genre_name = replace_na(genre_name, "Unspecified"))
+
+prop_rank <- paste0(as.character(prop[rank,1]), " ", "(",prop[rank,3], ")")
+}
+prop1 <- reviewRank.fun(1)
+prop2 <- reviewRank.fun(2)
+prop3 <- reviewRank.fun(3)
+prop4 <- reviewRank.fun(4)
+prop5 <- reviewRank.fun(5)
+prop6 <- reviewRank.fun(6)
+prop7 <- reviewRank.fun(7)
+prop8 <- reviewRank.fun(8)
+prop9 <- reviewRank.fun(9)
+prop10 <- reviewRank.fun(10)
+```
+
+Over the 21 years, the most frequently reviewed genres were Rock, Electronic, Experimental and Rap (well, actually the 4th most common type of review was one where the genre wasn't specified). Notably playing into Pitchfork's focus on indie music, Pop/R&B ranked 6th out 10. The list below provides a breakdown of the genres reviewed with the proportion of reviews in that genre in brackets:
+
+1. `r prop1` 
+2. `r prop2` 
+3. `r prop3` 
+4. `r prop4` 
+5. `r prop5` 
+6. `r prop6` 
+7. `r prop7` 
+8. `r prop8` 
+9. `r prop9` 
+10. `r prop10`
+
+When looking at how the proportion of genres reviewed changed over time, Pitchfork's coverage Rock declined over the 21 years while for Rap and Pop/R&B it increased.  
+
+```{r plotQ1a, echo=FALSE}
+ggplot(number_reviewsAbbr, aes(x=publish_year, y=genre_prop,
+                                   fill=Genre)) +
+  geom_bar(stat = "identity") + 
+  scale_x_continuous("", breaks=seq(1998, 2021, 2)) +
+  scale_y_continuous("") + 
+  coord_flip() + theme_bw() +
+  geom_text(aes(label=ifelse(genre_prop >= 0.05, paste0(sprintf("%.0f", genre_prop*100),"%"),"")),
+            position=position_stack(vjust=0.5)) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+
+```
+
+The plot below shows how the proportion of reviews by each of the "Other" genres changed between 1999 and 2020.
+
+```{r plotQ1b, echo=FALSE}
+ggplot(number_reviewsAbbrOther, aes(x=publish_year, y=genre_prop,
+                                       fill=Genre)) +
+  geom_bar(stat = "identity", position = "stack") + 
+  scale_x_continuous("", breaks=seq(1998, 2021, 2)) +
+  scale_y_continuous("", limits = c(0,1)) +
+  coord_flip() + theme_bw() +
+  geom_text(aes(label=ifelse(genre_prop >= 0.04, paste0(sprintf("%.0f", genre_prop*100),"%"),"")),
+            position=position_stack(vjust=0.5)) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+## 2. Which genre of music was the best (and worst) received?
+
+``` {r dataQ2, include=FALSE}
+line_data <- review_dataframe %>% 
+  filter(genre_name=="Rock" | genre_name=="Electronic" | genre_name=="Pop/R&B" | 
+           genre_name=="Rap") 
+
+line_data_other <- review_dataframe %>% 
+  filter(genre_name!="Rock" & genre_name!="Electronic" & genre_name!="Pop/R&B" & 
+           genre_name!="Rap") 
+
+
+# Ranking of each genre by average rating
+ratingAverage <- round(mean(review_dataframe$album_rating),2)
+
+# Function that ranks each genre by average rating
+genreRanking.func <- function(data.frame, rank.number){
+  ranking_df <- data.frame %>% 
+    group_by(genre_name) %>% 
+    dplyr::summarise(rating_mean = mean(album_rating)) %>% 
+    filter(genre_name!="Unspecified") %>% 
+    arrange(desc(rating_mean))
+  
+  genre_ranking <- paste0(as.character(ranking_df[rank.number,1]), " ", 
+                          "(", paste0(round(ranking_df[rank.number,2],2)), ")")
+}
+genre1 <- genreRanking.func(data.frame = review_dataframe, 1)
+genre2 <- genreRanking.func(data.frame = review_dataframe, 2)
+genre3 <- genreRanking.func(data.frame = review_dataframe, 3)
+genre4 <- genreRanking.func(data.frame = review_dataframe, 4)
+genre5 <- genreRanking.func(data.frame = review_dataframe, 5)
+genre6 <- genreRanking.func(data.frame = review_dataframe, 6)
+genre7 <- genreRanking.func(data.frame = review_dataframe, 7)
+genre8 <- genreRanking.func(data.frame = review_dataframe, 8)
+genre9 <- genreRanking.func(data.frame = review_dataframe, 9)
+```
+Between 1999 and 2020, the average review score was `r ratingAverage`. Interestingly, when we rank genres by their average review score, the least commonly reviewed genres had the best reviews on average:
+
+* `r genre1`
+* `r genre2`
+* `r genre3`
+* `r genre4`
+* `r genre5`
+* `r genre6`
+* `r genre7`
+* `r genre8`
+* `r genre9`
+
+This is likely because when it comes to less popular genres such as Jazz, Global and Experimental, there is a higher likelihood that reviews will ignore lesser known artists, and the more well-known artist are likelier to consistently produce the better music. 
+
+## 3. Did music get better over time?
+To answer this question, below is a line of best fit that best expresses the relationship between album review scores and release date. The line of best fit was estimated using a Generalised Additive Model (GAM). The plot suggests that overall, music reviews have actually gotten worse between 1999 and 2020. Scores declined from 1999 until 2008, where scores remained steady until around 2014 where they started to improve again. Hopefully music remains getting better!
+
+``` {r plotQ2a, echo=FALSE, message=FALSE}
+ggplot(review_dataframe, aes(x=date_time, y=album_rating)) +
+  geom_smooth(method = "gam", se=FALSE) + 
+  scale_y_continuous("Album rating", limits = c(5,10)) + theme_bw() +
+  labs(caption = "Lines of best fit plotted with a Generalised Additive Model.",
+       x="", title = "Music review scores over time")
+```
+
+While overall music review scores declined over time, was this the case for all genres? Do we see some genres actually improve? The graph below shows that over the 21 years Electronic,Rock and Rap had scores that declined whereas Pop/R&B saw a modest improvement. Electronic music reached its low point between 2010 and 2013, and then rebounded to scores almost as high as those it had in 1999. Rock's scores declined relatively sharply, steadying 2007 to 2015, from where scores began to improve again. Rap's scores consistently declined until about 2010 and have remained steady since. 
+``` {r plotQ2b, echo=FALSE, message=FALSE}
+ggplot(line_data, aes(x=date_time, y=album_rating, color=genre_name)) +
+  geom_smooth(method="gam", se=FALSE) + 
+  scale_y_continuous("Album rating", limits = c(5,10)) + theme_bw() +
+  labs(caption = "Lines of best fit plotted with a Generalised Additive Model.",
+       x="", title = "Music review scores over time: Electronic, Pop/R&B, Rap, Rock") +
+  theme(legend.title = element_blank())
+```
+
+Looking at the remaining genres, Experimental and Global music saw declines in their scores over time. Global music saw a consistent decline over the 21 years, whereas Experimental reached its low point around 2010 and improved somewhat thereafter. Jazz music also saw a decline but reached its low point around 2008 and ended up with stronger reviews towards the end of 2020 than towards the beginning of 1999. Folk/Country and Metal music both steadily improved over the 21 years, although both these genres early reviews were lower than those of Experimental, Global ad Jazz music.  
+
+``` {r plotQ2c, echo=FALSE, message=FALSE}
+ggplot(line_data_other, aes(x=date_time, y=album_rating, color=genre_name)) +
+  geom_smooth(se=FALSE) +
+  scale_y_continuous("Album rating", limits = c(5,10))  + theme_bw() +
+  labs(caption = "Lines of best fit plotted with a Generalised Additive Model.",
+       x="", title = "Music review scores over time: Experimental, Folk/Country, Global, Jazz, Metal") +
+  theme(legend.title = element_blank())
+```
+
+### 4. Which artists consistently produced the best music?
+To answer this question I ranked each artist by their average album score and only included artists that had released at least three albums. The table below lists the 20 artists with the highest average album scores. The Velvet Underground tops the list (despite not producing any 'new' music in decades), while the relatively unknown Girls and Max Tundra come in at seccond and third respectively. Notably, several of the artists first produced the music receiving high ratings long ago. These include The Velvet Underground, John Coltrane, The Beach Boys, Miles Davis and Galaxie 500. 
+
+``` {r dataQ4a, echo=FALSE, message=FALSE}
+# Artists with 3 or more albums with highest average album rating
+top_average_df <- review_dataframe %>% 
+  group_by(artist_name) %>% 
+  distinct(artist_name, album_name, .keep_all = TRUE) %>% 
+  dplyr::mutate(n=max(row_number())) %>% 
+  filter(n>2) %>% 
+  arrange(artist_name) %>% 
+  dplyr::mutate(rating_average = round(mean(album_rating),3)) %>% 
+  # Create single row with album names (only top three with year)
+  mutate(publish_year_brackets = paste0("(", publish_year, ")")) %>% 
+  unite(album_year, album_name, publish_year_brackets, sep = " ") %>% 
+  arrange(desc(album_rating)) %>%
+  slice(1:3) %>% 
+  dplyr::mutate(top3_albums = paste0(album_year, collapse = " | ")) %>% 
+  distinct(artist_name, .keep_all = TRUE) %>% 
+  arrange(desc(rating_average)) %>% 
+  select(artist_name, top3_albums, artist_genres, n, rating_average) %>% 
+  dplyr::rename(Artist = artist_name, `Top three albums` = top3_albums, 
+                Genre = artist_genres, `Number of reviews` = n,
+                `Average rating` = rating_average) %>% 
+  ungroup() %>% 
+  dplyr::mutate(Rank = row_number()) %>% 
+  relocate(Rank, .before = Artist) %>% 
+  slice(1:20) 
+
+
+```
+
+``` {r tableQ4a, echo=FALSE, message=FALSE}
+library(kableExtra)
+top_average_df %>% 
+  kable() %>% 
+  kable_styling()
+
+```
+
+### Conclusion
+
+
+
+
